@@ -72,7 +72,7 @@ expansion_partition() {
     LIMIT_BYTES=$((64 * 1024 * 1024 * 1024))
 
     # Get disk size in bytes
-    DISK_SIZE_BYTES="$(parted -s /dev/${DISK_NAME} unit B print | grep "/dev/${DISK_NAME}:" | awk '{print $3}' | tr -d 'B')"
+    DISK_SIZE_BYTES="$(lsblk -b -n -o SIZE -d "/dev/${DISK_NAME}")"
     # Validate disk size
     [[ "${DISK_SIZE_BYTES}" =~ ^[0-9]+$ ]] || DISK_SIZE_BYTES="0"
 

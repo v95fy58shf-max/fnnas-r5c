@@ -25,14 +25,15 @@
 #
 #======================================== Functions list ========================================
 #
-# error_msg          : Output error message
-# check_depends      : Check dependencies
-# init_var           : Initialize all variables
-# show_aml_model     : Display the model list
-# ampart_tool        : Repartition using ampart
-# create_partition   : Create emmc partition
-# copy_bootfs        : Copy bootfs partition files
-# copy_rootfs        : Copy rootfs partition files
+# error_msg           : Output error message
+# check_depends       : Check dependencies
+# init_var            : Initialize all variables
+# show_aml_model      : Display the model list
+# ampart_tool         : Repartition using ampart
+# show_partition_menu : Display disk option info
+# create_partition    : Create emmc partition
+# copy_bootfs         : Copy bootfs partition files
+# copy_rootfs         : Copy rootfs partition files
 #
 #==================================== Set default parameters ====================================
 #
@@ -300,6 +301,20 @@ ampart_tool() {
     fi
 }
 
+# Show partition menu
+show_partition_menu() {
+    cat <<EOF
+  ┌────────────────────────────────────────────────────────────────┐
+  │  Disk size is larger than 64GiB.                               │
+  ├───────────┬────────────────────────────────────────────────────┤
+  │  Optional │ Description                                        │
+  ├───────────┼────────────────────────────────────────────────────┤
+  │     1     │ Rootfs partition limit to 64GiB.                   │
+  │     2     │ [default] Rootfs partition expand to full disk.    │
+  └───────────┴────────────────────────────────────────────────────┘
+EOF
+}
+
 # Create emmc partition
 create_partition() {
     cd /
@@ -385,11 +400,44 @@ create_partition() {
         BLANK2="770" # Rootfs partition could be set after [ 1350 MiB ] of the total disk.
     fi
 
+    # Set rootfs size limit (Unit: GiB)
+    ROOTFS_SIZE_LIMIT_GiB="64"
+    # Calculate partition size limits(Unit: MiB)
+    ROOT_START_MiB="$((BLANK1 + BOOT + BLANK2))"
+    MAX_SIZE_MiB="$((ROOTFS_SIZE_LIMIT_GiB * 1024))"
+    TARGET_END_MiB="$((ROOT_START_MiB + MAX_SIZE_MiB))"
+    # Calculate target end position in bytes
+    TARGET_END_BYTES="$((TARGET_END_MiB * 1024 * 1024))"
+
+    # Get disk size in bytes
+    DISK_SIZE_BYTES="$(lsblk -b -n -o SIZE -d "${DEV_EMMC}")"
+    [[ "${DISK_SIZE_BYTES}" =~ ^[0-9]+$ ]] || DISK_SIZE_BYTES="0"
+
+    # Default root end position
+    ROOT_END_MiB="100%"
+
+    # Select partition expansion strategy
+    if [[ "${DISK_SIZE_BYTES}" -gt "${TARGET_END_BYTES}" ]]; then
+        show_partition_menu
+        echo -ne "${OPTIONS} Please Input ID (Default 2): "
+        read deskid
+
+        [[ -z "${deskid}" || ! "${deskid}" =~ ^[12]$ ]] && deskid="2"
+        echo -e "${INFO} Input ID: [ ${deskid} ]"
+
+        if [[ "${deskid}" == "1" ]]; then
+            ROOT_END_MiB="${TARGET_END_MiB}MiB"
+            echo -e "${INFO} Strategy: Limit Rootfs to ${ROOTFS_SIZE_LIMIT_GiB}GiB."
+        else
+            echo -e "${INFO} Strategy: Expand Rootfs to Full Disk."
+        fi
+    fi
+
     # Format emmc disk
-    echo -e "${INFO} Start create MBR and partittion."
+    echo -e "${INFO} Start create MBR and partition."
     parted -s "${DEV_EMMC}" mklabel msdos
     parted -s "${DEV_EMMC}" mkpart primary fat32 $((BLANK1))MiB $((BLANK1 + BOOT - 1))MiB
-    parted -s "${DEV_EMMC}" mkpart primary btrfs $((BLANK1 + BOOT + BLANK2))MiB 100%
+    parted -s "${DEV_EMMC}" mkpart primary btrfs ${ROOT_START_MiB}MiB ${ROOT_END_MiB}
     [[ "${?}" -eq "0" ]] || error_msg "Failed to partition internal eMMC using [ parted ]."
 
     # Write bootloader
@@ -417,7 +465,7 @@ copy_bootfs() {
     PART_BOOT="${DEV_EMMC}p1"
 
     if grep -q ${PART_BOOT} /proc/mounts; then
-        echo -e "${INFO} Unmounting BOOT partiton."
+        echo -e "${INFO} Unmounting BOOT partition."
         umount -f ${PART_BOOT}
         [[ "${?}" -eq "0" ]] || error_msg "Failed to umount [ ${PART_BOOT} ]."
     fi
@@ -490,7 +538,7 @@ copy_rootfs() {
     PART_ROOT="${DEV_EMMC}p2"
 
     if grep -q ${PART_ROOT} /proc/mounts; then
-        echo -e "${INFO} Unmounting ROOT partiton."
+        echo -e "${INFO} Unmounting ROOT partition."
         umount -f ${PART_ROOT}
         [[ "${?}" -eq "0" ]] || error_msg "Failed to umount [ ${PART_ROOT} ]."
     fi
